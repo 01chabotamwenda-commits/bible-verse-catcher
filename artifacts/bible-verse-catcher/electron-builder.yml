@@ -1,0 +1,30 @@
+appId: com.versecatcher.app
+productName: Verse Catcher
+copyright: Copyright © 2025 Verse Catcher
+
+directories:
+  output: release
+  buildResources: build-resources
+
+files:
+  - dist/**
+  - package.json
+  - api-server/**
+
+extraMetadata:
+  main: dist/electron/main.js
+  type: commonjs
+
+win:
+  target:
+    - target: nsis
+      arch: x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Verse Catcher
+
+publish: null

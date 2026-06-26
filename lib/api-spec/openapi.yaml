@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: verses
+    description: Bible verse detection
 paths:
   /healthz:
     get:
@@ -24,6 +26,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /verses/detect:
+    post:
+      operationId: detectVerses
+      tags: [verses]
+      summary: Detect Bible verse references in text using AI
+      description: Uses Groq LLM to extract Bible verse references from a transcript chunk. Returns normalized references with verse text.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerseDetectInput"
+      responses:
+        "200":
+          description: Detected verses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerseDetectResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +66,59 @@ components:
           type: string
       required:
         - status
-
+    DetectedVerseItem:
+      type: object
+      required:
+        - book
+        - chapter
+        - reference
+        - isPartial
+      properties:
+        book:
+          type: string
+        chapter:
+          type: number
+        verse:
+          type: ["number", "null"]
+        reference:
+          type: string
+          description: 'Normalized reference e.g. "Ephesians 3:1"'
+        verseText:
+          type: ["string", "null"]
+          description: The verse text from local Bible data, if available
+        isPartial:
+          type: boolean
+          description: True if only a chapter was detected (no verse number)
+    VerseDetectInput:
+      type: object
+      required:
+        - transcript
+      properties:
+        transcript:
+          type: string
+          description: The speech transcript text to scan for Bible verse references
+        knownRefs:
+          type: array
+          items:
+            type: string
+          description: Already-detected references to skip (deduplication)
+    VerseDetectResult:
+      type: object
+      required:
+        - verses
+        - latencyMs
+      properties:
+        verses:
+          type: array
+          items:
+            $ref: "#/components/schemas/DetectedVerseItem"
+        latencyMs:
+          type: number
+          description: Server-side processing time in milliseconds
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string

@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Bible Verse Catcher"
+version = "1.0.0"
+id = "artifacts/bible-verse-catcher"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25304
+
+[services.development]
+run = "pnpm --filter @workspace/bible-verse-catcher run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/bible-verse-catcher", "run", "build" ]
+publicDir = "artifacts/bible-verse-catcher/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25304"
+BASE_PATH = "/"
