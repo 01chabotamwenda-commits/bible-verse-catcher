@@ -536,6 +536,40 @@ function SettingsScreen({
   onExportPdf: () => void;
   onBack: () => void;
 }) {
+  // ── API Keys state (Electron only) ─────────────────────────────────────────
+  const [deepgramKey, setDeepgramKey] = useState('');
+  const [groqKey, setGroqKey] = useState('');
+  const [showDeepgram, setShowDeepgram] = useState(false);
+  const [showGroq, setShowGroq] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+
+  useEffect(() => {
+    if (!isElectron) return;
+    window.electronAPI!.getConfig().then((cfg) => {
+      setDeepgramKey(cfg.deepgramApiKey ?? '');
+      setGroqKey(cfg.groqApiKey ?? '');
+    });
+  }, []);
+
+  const handleSaveKeys = async () => {
+    if (!isElectron) return;
+    setIsSaving(true);
+    setSaveStatus('idle');
+    try {
+      await window.electronAPI!.setConfig({
+        deepgramApiKey: deepgramKey.trim() || undefined,
+        groqApiKey: groqKey.trim() || undefined,
+      });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch {
+      setSaveStatus('error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const fontOptions: Array<{ value: FontSize; label: string; example: string }> = [
     { value: 'sm', label: 'Small', example: 'Aa' },
     { value: 'md', label: 'Medium', example: 'Aa' },
@@ -689,6 +723,90 @@ function SettingsScreen({
           </div>
         )}
       </SettingsSection>
+
+      {/* API Keys — Electron desktop only */}
+      {isElectron && (
+        <SettingsSection title="API Keys">
+          <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+            <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+              <Key className="w-3.5 h-3.5 shrink-0 mt-0.5 text-primary" />
+              Keys are stored locally on your machine and passed to the bundled API server on startup. After saving, the server restarts automatically.
+            </p>
+
+            {/* Deepgram */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Deepgram API Key</label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showDeepgram ? 'text' : 'password'}
+                    value={deepgramKey}
+                    onChange={(e) => setDeepgramKey(e.target.value)}
+                    placeholder="dg_…"
+                    className="w-full h-9 rounded-lg border border-border bg-background px-3 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowDeepgram((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    title={showDeepgram ? 'Hide' : 'Show'}
+                  >
+                    {showDeepgram ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground pl-0.5">Used for real-time speech transcription · <a href="https://console.deepgram.com" target="_blank" rel="noreferrer" className="underline hover:text-foreground">console.deepgram.com</a></p>
+            </div>
+
+            {/* Groq */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground">Groq API Key</label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={showGroq ? 'text' : 'password'}
+                    value={groqKey}
+                    onChange={(e) => setGroqKey(e.target.value)}
+                    placeholder="gsk_…"
+                    className="w-full h-9 rounded-lg border border-border bg-background px-3 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowGroq((v) => !v)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    title={showGroq ? 'Hide' : 'Show'}
+                  >
+                    {showGroq ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground pl-0.5">Used for AI verse detection · <a href="https://console.groq.com" target="_blank" rel="noreferrer" className="underline hover:text-foreground">console.groq.com</a></p>
+            </div>
+
+            {/* Save button */}
+            <div className="flex items-center gap-3 pt-1">
+              <Button
+                onClick={handleSaveKeys}
+                disabled={isSaving}
+                className="h-9 px-4 text-sm gap-2"
+              >
+                <Save className="w-3.5 h-3.5" />
+                {isSaving ? 'Saving…' : 'Save & Restart Server'}
+              </Button>
+              {saveStatus === 'saved' && (
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Saved — server restarting
+                </span>
+              )}
+              {saveStatus === 'error' && (
+                <span className="text-xs text-destructive flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> Failed to save
+                </span>
+              )}
+            </div>
+          </div>
+        </SettingsSection>
+      )}
 
       {/* About */}
       <SettingsSection title="About">
