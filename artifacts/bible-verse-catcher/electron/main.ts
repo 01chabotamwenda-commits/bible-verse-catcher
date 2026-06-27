@@ -4,12 +4,19 @@ import http from 'http';
 import fs from 'fs';
 import { spawn, type ChildProcess } from 'child_process';
 
+// ── Single-instance lock ──────────────────────────────────────────────────────
+// Prevents Windows from spawning a second copy when the user double-clicks
+// the icon while the app is already starting up (window has show:false).
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+}
+
 // ── File logger ─────────────────────────────────────────────────────────────
 function makeLogger() {
   const logDir = path.join(app.getPath('userData'), 'logs');
   fs.mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, 'main.log');
-  // Truncate on each launch so the file stays small
   fs.writeFileSync(logFile, `=== Verse Catcher started ${new Date().toISOString()} ===\n`);
 
   function write(level: string, msg: string) {
@@ -57,10 +64,7 @@ function writeConfig(config: AppConfig): void {
 }
 
 // ── API Server ───────────────────────────────────────────────────────────────
-// The API server (Express + WebSocket proxy to Deepgram) is bundled as a
-// separate executable and started as a child process on a fixed port.
 const API_SERVER_PORT = 5000;
-
 let apiServerProcess: ChildProcess | null = null;
 
 function startApiServer(): Promise<void> {
@@ -104,7 +108,6 @@ function startApiServer(): Promise<void> {
       log.warn(`API server exited with code ${code}`);
     });
 
-    // Wait for the server to be ready
     const maxAttempts = 30;
     let attempts = 0;
     const checkReady = () => {
@@ -139,8 +142,6 @@ function stopApiServer() {
 app.on('before-quit', () => stopApiServer());
 
 // ── Local HTTP server (required for Web Speech API) ──────────────────────────
-// Chromium refuses to start speech recognition from file:// origins.
-// Serving from http://127.0.0.1 makes it a trusted HTTP context.
 function startLocalServer(staticDir: string): Promise<number> {
   const MIME: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
@@ -189,115 +190,135 @@ function startLocalServer(staticDir: string): Promise<number> {
   });
 }
 
-// ── Window ───────────────────────────────────────────────────────────────────
-async function createWindow(): Promise<void> {
-  const publicDir = path.join(__dirname, '../public');
-  log.info(`Static dir: ${publicDir}`);
-  log.info(`Static dir exists: ${fs.existsSync(publicDir)}`);
-  log.info(`index.html exists: ${fs.existsSync(path.join(publicDir, 'index.html'))}`);
+// ── IPC handlers (registered once at module level) ───────────────────────────
+// These must live outside createWindow() — registering inside would duplicate
+// them on every call and throw "second handler" errors in Electron.
+let mainWindow: BrowserWindow | null = null;
 
-  // Start the API server before opening the window
+ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+ipcMain.handle('window:maximize', () => {
+  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+  else mainWindow?.maximize();
+});
+ipcMain.handle('window:close', () => mainWindow?.close());
+ipcMain.handle('window:is-maximized', () => mainWindow?.isMaximized() ?? false);
+ipcMain.handle('config:get', () => readConfig());
+ipcMain.handle('config:set', async (_e, config: AppConfig) => {
+  writeConfig(config);
+  log.info('Config updated — restarting API server with new keys');
+  stopApiServer();
   try {
     await startApiServer();
+    log.info('API server restarted successfully');
   } catch (e) {
-    log.error(`Failed to start API server: ${e}`);
-    // Continue anyway — the user can still use the app with regex-only detection
+    log.error(`API server restart failed after config change: ${e}`);
   }
+});
 
-  let port: number;
+// ── Window ───────────────────────────────────────────────────────────────────
+let isCreatingWindow = false;
+
+async function createWindow(): Promise<void> {
+  // Guard against concurrent calls (e.g. activate firing while startup is async)
+  if (isCreatingWindow || mainWindow !== null) return;
+  isCreatingWindow = true;
+
   try {
-    port = await startLocalServer(publicDir);
-  } catch (e) {
-    log.error(`Failed to start local server: ${e}`);
-    throw e;
-  }
+    const publicDir = path.join(__dirname, '../public');
+    log.info(`Static dir: ${publicDir}`);
+    log.info(`Static dir exists: ${fs.existsSync(publicDir)}`);
+    log.info(`index.html exists: ${fs.existsSync(path.join(publicDir, 'index.html'))}`);
 
-  // Pass the API server URL to the renderer via env var
-  process.env.ELECTRON_API_URL = `http://127.0.0.1:${API_SERVER_PORT}`;
-
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 900,
-    minHeight: 620,
-    frame: false,
-    titleBarStyle: 'hidden',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-    title: 'Verse Catcher',
-    backgroundColor: '#adb9c7',
-    show: false,
-  });
-
-  // ── DevTools toggle: Ctrl+Shift+I or F12 ────────────────────────────────
-  globalShortcut.register('CommandOrControl+Shift+I', () => {
-    win.webContents.toggleDevTools();
-  });
-  globalShortcut.register('F12', () => {
-    win.webContents.toggleDevTools();
-  });
-
-  // ── IPC window controls ──────────────────────────────────────────────────
-  ipcMain.handle('window:minimize', () => win.minimize());
-  ipcMain.handle('window:maximize', () => {
-    if (win.isMaximized()) win.unmaximize();
-    else win.maximize();
-  });
-  ipcMain.handle('window:close', () => win.close());
-  ipcMain.handle('window:is-maximized', () => win.isMaximized());
-
-  // ── IPC config (API keys) ────────────────────────────────────────────────
-  ipcMain.handle('config:get', () => readConfig());
-  ipcMain.handle('config:set', async (_e, config: AppConfig) => {
-    writeConfig(config);
-    log.info('Config updated — restarting API server with new keys');
-    stopApiServer();
     try {
       await startApiServer();
-      log.info('API server restarted successfully');
     } catch (e) {
-      log.error(`API server restart failed after config change: ${e}`);
+      log.error(`Failed to start API server: ${e}`);
     }
-  });
 
-  win.on('maximize',   () => win.webContents.send('window:maximized-change', true));
-  win.on('unmaximize', () => win.webContents.send('window:maximized-change', false));
+    let port: number;
+    try {
+      port = await startLocalServer(publicDir);
+    } catch (e) {
+      log.error(`Failed to start local server: ${e}`);
+      throw e;
+    }
 
-  // ── Microphone permission ────────────────────────────────────────────────
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    log.info(`Permission requested: ${permission}`);
-    callback(permission === 'media');
-  });
+    process.env.ELECTRON_API_URL = `http://127.0.0.1:${API_SERVER_PORT}`;
 
-  // ── Log renderer console messages ────────────────────────────────────────
-  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-    log.info(`[renderer][L${level}] ${message} (${sourceId}:${line})`);
-  });
+    const win = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      minWidth: 900,
+      minHeight: 620,
+      frame: false,
+      titleBarStyle: 'hidden',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+      title: 'Verse Catcher',
+      backgroundColor: '#adb9c7',
+      show: false,
+    });
 
-  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    log.error(`did-fail-load: ${code} ${desc} url=${url}`);
-  });
+    mainWindow = win;
 
-  win.once('ready-to-show', () => {
-    log.info('Window ready to show');
-    win.show();
-  });
+    globalShortcut.register('CommandOrControl+Shift+I', () => {
+      win.webContents.toggleDevTools();
+    });
+    globalShortcut.register('F12', () => {
+      win.webContents.toggleDevTools();
+    });
 
-  const url = `http://127.0.0.1:${port}/`;
-  log.info(`Loading URL: ${url}`);
-  win.loadURL(url);
+    win.on('maximize',   () => win.webContents.send('window:maximized-change', true));
+    win.on('unmaximize', () => win.webContents.send('window:maximized-change', false));
+
+    win.on('closed', () => {
+      mainWindow = null;
+    });
+
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      log.info(`Permission requested: ${permission}`);
+      callback(permission === 'media');
+    });
+
+    win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+      log.info(`[renderer][L${level}] ${message} (${sourceId}:${line})`);
+    });
+
+    win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      log.error(`did-fail-load: ${code} ${desc} url=${url}`);
+    });
+
+    win.once('ready-to-show', () => {
+      log.info('Window ready to show');
+      win.show();
+    });
+
+    const url = `http://127.0.0.1:${port}/`;
+    log.info(`Loading URL: ${url}`);
+    win.loadURL(url);
+  } finally {
+    isCreatingWindow = false;
+  }
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
+app.on('second-instance', () => {
+  // A second instance was launched — focus the existing window instead.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
+
 app.whenReady().then(() => {
   log.info('app.whenReady');
   createWindow().catch((e) => log.error(`createWindow failed: ${e}`));
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (mainWindow === null && !isCreatingWindow) createWindow();
   });
 });
 
