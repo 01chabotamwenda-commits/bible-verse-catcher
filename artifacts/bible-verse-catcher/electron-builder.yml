@@ -2,6 +2,8 @@ appId: com.versecatcher.app
 productName: Verse Catcher
 copyright: Copyright © 2025 Verse Catcher
 
+asar: false
+
 directories:
   output: release
   buildResources: build-resources
@@ -9,7 +11,6 @@ directories:
 files:
   - dist/**
   - package.json
-  - api-server/**
 
 extraMetadata:
   main: dist/electron/main.js
