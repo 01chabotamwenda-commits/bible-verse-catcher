@@ -13,13 +13,12 @@ if (!existsSync(distSrc)) {
   console.error(`ERROR: API server dist not found at ${distSrc}`);
   process.exit(1);
 }
+
+// Copy only the esbuild output — NOT node_modules.
+// esbuild fully bundles all dependencies into index.mjs and the pino worker
+// files, so no node_modules are required at runtime. Copying node_modules
+// would add hundreds of MB and can include platform-mismatched native binaries
+// that crash the server on the user's machine.
 cpSync(distSrc, destDir, { recursive: true });
 
-const nmSrc = join(apiServerDir, 'node_modules');
-if (!existsSync(nmSrc)) {
-  console.error(`ERROR: API server node_modules not found at ${nmSrc}`);
-  process.exit(1);
-}
-cpSync(nmSrc, join(destDir, 'node_modules'), { recursive: true });
-
-console.log('API server copied to dist/api-server');
+console.log('API server dist copied to dist/api-server');

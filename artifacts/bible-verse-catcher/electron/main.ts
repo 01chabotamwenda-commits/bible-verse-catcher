@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, ipcMain, globalShortcut } from 'electron';
+import { app, BrowserWindow, session, ipcMain, globalShortcut, dialog } from 'electron';
 import path from 'path';
 import http from 'http';
 import fs from 'fs';
@@ -233,6 +233,10 @@ async function createWindow(): Promise<void> {
       await startApiServer();
     } catch (e) {
       log.error(`Failed to start API server: ${e}`);
+      dialog.showErrorBox(
+        'Verse Catcher — API Server Error',
+        `The local API server failed to start.\n\n${String(e)}\n\nLog file: ${log.path}`
+      );
     }
 
     let port: number;
